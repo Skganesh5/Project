@@ -1,0 +1,59 @@
+steps:
+  # Step to install modelscan and scan the model file before building the image
+  - name: 'python:3.11-slim'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        echo "Installing modelscan..."
+        pip install modelscan
+        shopt -s nullglob
+        for model in *.pkl; do
+          echo "Scanning $model..."
+          scan_output=$(modelscan -p $model)
+          echo "$scan_output"
+          if ! echo "$scan_output" | grep -q "No issues found! 🎉"; then
+            echo "Model scan failed with issues for $model."
+            exit 1
+          fi
+        done
+    id: 'scan-model'
+
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/chrome-unity-454609-g5/container-images/hello-world:latest', '.']
+    id: 'build-image'
+    waitFor: ['scan-model']
+
+  # Push the Docker image to Google Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/chrome-unity-454609-g5/container-images/hello-world:latest']
+    id: 'push-image'
+    waitFor: ['build-image']
+
+  # Deploy the image to Cloud Run
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'hello-world-service'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/chrome-unity-454609-g5/container-images/hello-world:latest'
+      - '--service-account'
+      - >-
+        427896647379-compute@developer.gserviceaccount.com
+      - '--project'
+      - chrome-unity-454609-g5
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+    id: 'deploy-service'
+    waitFor: ['push-image']
+
+images:
+  - 'us-central1-docker.pkg.dev/chrome-unity-454609-g5/container-images/hello-world:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
